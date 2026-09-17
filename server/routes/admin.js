@@ -61,6 +61,18 @@ function readExamStartAt() {
 
 const questionNos = questions.map((q) => q.no); // [1,2,...,22]
 
+// ---- 实践题五维度常量 ----
+
+const PRACTICAL_DIMENSIONS = [
+  { key: 'cleaning', label: '数据判断与清洗', max: 30 },
+  { key: 'roster_seating', label: '最终名单与座位', max: 30 },
+  { key: 'procurement_questions', label: '采购与问题建议', max: 15 },
+  { key: 'cross_check', label: '跨表核验与异常记录', max: 15 },
+  { key: 'webpage', label: '网页接入', max: 10 },
+];
+const PRACTICAL_MAX = PRACTICAL_DIMENSIONS.reduce((s, d) => s + d.max, 0); // 100
+const DIMENSION_MAP = new Map(PRACTICAL_DIMENSIONS.map((d) => [d.key, d.max]));
+
 // ---- 已有接口：开赛时间 ----
 
 // POST /api/admin/exam-start —— 设置开赛时间
@@ -200,6 +212,7 @@ router.post('/admin/import', requireAdmin, (req, res, next) => {
         db.prepare('DELETE FROM uploads').run();
         db.prepare('DELETE FROM sessions').run();
         db.prepare('DELETE FROM scores').run();
+        db.prepare('DELETE FROM practical_scores').run();
         db.prepare('DELETE FROM students').run();
 
         const insert = db.prepare(
@@ -254,6 +267,11 @@ router.get('/admin/students', requireAdmin, (req, res, next) => {
       'SELECT student_id, question_no, score FROM scores'
     ).all();
 
+    // 批量查 practical_scores
+    const allPracticalScores = db.prepare(
+      'SELECT student_id, dimension, score FROM practical_scores'
+    ).all();
+
     // 构建索引
     const answerMap = new Map(); // studentId → Set of "qn:sn"
     for (const a of allAnswers) {
@@ -277,6 +295,13 @@ router.get('/admin/students', requireAdmin, (req, res, next) => {
       const entry = scoreMap.get(s.student_id);
       entry.scoredCount++;
       entry.totalScore += s.score;
+    }
+
+    // studentId → practicalTotalScore（未评时 undefined）
+    const practicalMap = new Map();
+    for (const ps of allPracticalScores) {
+      if (!practicalMap.has(ps.student_id)) practicalMap.set(ps.student_id, 0);
+      practicalMap.set(ps.student_id, practicalMap.get(ps.student_id) + ps.score);
     }
 
     const students = allStudents.map((s) => {
@@ -309,6 +334,8 @@ router.get('/admin/students', requireAdmin, (req, res, next) => {
         scoredCount: sc ? sc.scoredCount : 0,
         score: sc ? sc.totalScore : null,
         maxScore: MAX_SCORE,
+        practicalScore: practicalMap.has(s.student_id) ? practicalMap.get(s.student_id) : null,
+        practicalMax: PRACTICAL_MAX,
         answeredQuestions: [...answeredQuestionsSet].sort((a, b) => a - b),
         xlsx: upSet.has('xlsx'),
         zip: upSet.has('zip'),
@@ -352,6 +379,10 @@ router.get('/admin/student/:id', requireAdmin, (req, res, next) => {
       'SELECT question_no, score FROM scores WHERE student_id = ?'
     ).all(studentId);
 
+    const practicalScores = db.prepare(
+      'SELECT dimension, score FROM practical_scores WHERE student_id = ?'
+    ).all(studentId);
+
     const uploads = db.prepare(
       'SELECT id, file_type, file_path, uploaded_at FROM uploads WHERE student_id = ?'
     ).all(studentId);
@@ -376,6 +407,10 @@ router.get('/admin/student/:id', requireAdmin, (req, res, next) => {
         questionNo: s.question_no,
         score: s.score,
       })),
+      practicalScores: practicalScores.map((ps) => ({
+        dimension: ps.dimension,
+        score: ps.score,
+      })),
       uploads: uploads.map((u) => ({
         id: u.id,
         type: u.file_type,
@@ -388,7 +423,75 @@ router.get('/admin/student/:id', requireAdmin, (req, res, next) => {
   }
 });
 
-// ---- 新接口 ⑤：POST /api/admin/score —— 保存某学生某题得分 ----
+// ---- 新接口 ⑤：POST /api/admin/student —— 添加单个学生 ----
+
+router.post('/admin/student', requireAdmin, (req, res, next) => {
+  try {
+    const { studentId, name, college, class: className } = req.body || {};
+    if (!studentId || !name) {
+      return res.status(400).json({ ok: false, msg: '学号和姓名必填' });
+    }
+    const existing = db.prepare('SELECT 1 FROM students WHERE student_id = ?').get(studentId);
+    if (existing) {
+      return res.status(400).json({ ok: false, msg: '该学号已存在' });
+    }
+    db.prepare('INSERT INTO students (student_id, name, college, class_name) VALUES (?, ?, ?, ?)').run(studentId, name, college || null, className || null);
+    res.json({ ok: true, student: { studentId, name, college: college || null, class: className || null } });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// ---- 新接口 ⑥：GET /api/admin/practical-dimensions —— 实践题评分维度定义 ----
+
+router.get('/admin/practical-dimensions', requireAdmin, (req, res) => {
+  res.json({ ok: true, dimensions: PRACTICAL_DIMENSIONS });
+});
+
+// ---- 新接口 ⑦：POST /api/admin/practical-score —— 保存实践题某维度得分 ----
+
+const upsertPracticalScore = db.prepare(`
+  INSERT INTO practical_scores (student_id, dimension, score, updated_at)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT(student_id, dimension) DO UPDATE SET
+    score = excluded.score,
+    updated_at = excluded.updated_at
+`);
+
+router.post('/admin/practical-score', requireAdmin, (req, res, next) => {
+  try {
+    const { studentId, dimension, score } = req.body || {};
+
+    if (!studentId || !dimension) {
+      return res.status(400).json({ ok: false, msg: '缺少 studentId 或 dimension' });
+    }
+
+    const maxPoints = DIMENSION_MAP.get(dimension);
+    if (maxPoints === undefined) {
+      return res.status(400).json({ ok: false, msg: `非法维度: ${dimension}` });
+    }
+
+    if (!Number.isInteger(score) || score < 0 || score > maxPoints) {
+      return res.status(400).json({ ok: false, msg: `score 必须为 0–${maxPoints} 的整数` });
+    }
+
+    const student = db.prepare('SELECT 1 FROM students WHERE student_id = ?').get(studentId);
+    if (!student) {
+      return res.status(400).json({ ok: false, msg: '学生不存在' });
+    }
+
+    upsertPracticalScore.run(studentId, dimension, score, new Date().toISOString());
+
+    const row = db.prepare('SELECT SUM(score) AS total FROM practical_scores WHERE student_id = ?').get(studentId);
+    const practicalTotal = row.total || 0;
+
+    res.json({ ok: true, dimension, score, practicalTotal, practicalMax: PRACTICAL_MAX });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// ---- 新接口 ⑧：POST /api/admin/score —— 保存某学生某题得分 ----
 
 const upsertScore = db.prepare(`
   INSERT INTO scores (student_id, question_no, score, updated_at)
@@ -469,6 +572,11 @@ router.get('/admin/export', requireAdmin, (req, res, next) => {
       'SELECT student_id, question_no, score FROM scores'
     ).all();
 
+    // 批量查全部实践题分数
+    const allPracticalScores = db.prepare(
+      'SELECT student_id, dimension, score FROM practical_scores'
+    ).all();
+
     // 构建答案索引：studentId → questionNo → [answerText per subNo]
     const answerMap = new Map();
     for (const a of allAnswers) {
@@ -492,6 +600,13 @@ router.get('/admin/export', requireAdmin, (req, res, next) => {
       scoreMap.get(s.student_id).set(s.question_no, s.score);
     }
 
+    // 构建实践题分数索引：studentId → dimension → score
+    const practicalMap = new Map();
+    for (const ps of allPracticalScores) {
+      if (!practicalMap.has(ps.student_id)) practicalMap.set(ps.student_id, new Map());
+      practicalMap.get(ps.student_id).set(ps.dimension, ps.score);
+    }
+
     // CSV 表头：元信息列 + 各题答案列 + 各计分题得分列 + 总分 + 上传状态
     const header = ['学号', '姓名', '学院', '班级', '是否交卷'];
     for (const q of questions) {
@@ -503,6 +618,11 @@ router.get('/admin/export', requireAdmin, (req, res, next) => {
       header.push(`Q${q.no}得分`);
     }
     header.push('总分');
+    // 实践题五维度得分列 + 实践题总分
+    for (const d of PRACTICAL_DIMENSIONS) {
+      header.push(d.label);
+    }
+    header.push('实践题总分');
     header.push('上传状态');
 
     const lines = [header.map(csvEscape).join(',')];
@@ -553,6 +673,22 @@ router.get('/admin/export', requireAdmin, (req, res, next) => {
       }
       // 总分：未评任何题时为空
       row.push(hasAnyScore ? String(totalScore) : '');
+
+      // 实践题五维度得分列
+      const psMap = practicalMap.get(s.student_id) || new Map();
+      let practicalTotal = 0;
+      let hasAnyPractical = false;
+      for (const d of PRACTICAL_DIMENSIONS) {
+        const ps = psMap.get(d.key);
+        if (ps !== undefined) {
+          row.push(String(ps));
+          practicalTotal += ps;
+          hasAnyPractical = true;
+        } else {
+          row.push('');
+        }
+      }
+      row.push(hasAnyPractical ? String(practicalTotal) : '');
 
       // 上传状态
       const uploadStatus = [];

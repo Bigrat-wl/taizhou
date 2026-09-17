@@ -48,3 +48,6 @@ docs/agent-workflow-changelog.md
 docs/contracts/模块与并行.md
 # 任务记录（含执行汇报、审查结论、内部讨论）
 docs/tasks/
+
+# 部署手册（含服务器实际情况：IP、路径、其他项目，不公开）
+deploy/runbook.md

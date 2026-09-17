@@ -47,6 +47,7 @@ interface StudentDetail {
   }
   answers: StudentAnswer[]
   scores: ScoreEntry[]
+  practicalScores: { dimension: string; score: number }[]
   uploads: { id: number; type: string; path: string; at: string }[]
 }
 
@@ -58,6 +59,8 @@ interface StudentListItem {
   scoredCount: number
   score: number | null
   maxScore: number
+  practicalScore: number | null
+  practicalMax: number
 }
 
 // ---- 状态 ----
@@ -97,6 +100,31 @@ const previewZipFiles = ref<ZipFileEntry[]>([])
 const activeSheetIndex = ref(0)
 const sheetPage = ref(1)
 const SHEET_PAGE_SIZE = 50
+
+// ---- 实践题打分 ----
+
+interface PracticalDimension {
+  key: string
+  label: string
+  max: number
+}
+
+const practicalDimensions = ref<PracticalDimension[]>([])
+const practicalScoresMap = ref<Record<string, number>>({})
+const practicalSavingMap = ref<Record<string, 'saving' | 'saved' | 'error'>>({})
+
+const practicalTotal = computed(() => {
+  let sum = 0
+  for (const d of practicalDimensions.value) {
+    const s = practicalScoresMap.value[d.key]
+    if (s !== undefined) sum += s
+  }
+  return sum
+})
+
+const practicalScoredCount = computed(() => {
+  return practicalDimensions.value.filter((d) => practicalScoresMap.value[d.key] !== undefined).length
+})
 
 // ---- 计分题 ----
 
@@ -184,6 +212,13 @@ async function loadStudentDetail(studentId: string) {
     }
     scoresMap.value = map
 
+    // 初始化实践题分数映射
+    const pMap: Record<string, number> = {}
+    for (const ps of data.practicalScores || []) {
+      pMap[ps.dimension] = ps.score
+    }
+    practicalScoresMap.value = pMap
+
     // 滚动到第一题
     await nextTick()
     scrollToQuestion(scoredQuestionNos.value[0] || 11)
@@ -194,6 +229,67 @@ async function loadStudentDetail(studentId: string) {
   } finally {
     loading.value = false
   }
+}
+
+// ---- 加载实践题维度定义 ----
+
+async function loadPracticalDimensions() {
+  try {
+    const res = await adminFetch('/api/admin/practical-dimensions')
+    const data = await res.json()
+    if (data.ok) practicalDimensions.value = data.dimensions
+  } catch {
+    // 已由 adminFetch 处理鉴权失败
+  }
+}
+
+// ---- 保存实践题分数 ----
+
+async function savePracticalScore(dimension: string, score: number) {
+  practicalSavingMap.value[dimension] = 'saving'
+  try {
+    const res = await adminFetch('/api/admin/practical-score', {
+      method: 'POST',
+      body: JSON.stringify({
+        studentId: props.studentId,
+        dimension,
+        score,
+      }),
+    })
+    const data = await res.json()
+    if (!data.ok) throw new Error(data.msg || '保存失败')
+    practicalScoresMap.value[dimension] = score
+    practicalSavingMap.value[dimension] = 'saved'
+    setTimeout(() => {
+      if (practicalSavingMap.value[dimension] === 'saved') {
+        delete practicalSavingMap.value[dimension]
+      }
+    }, 2000)
+  } catch (e) {
+    practicalSavingMap.value[dimension] = 'error'
+    ElMessage.error((e as Error).message || '保存失败')
+  }
+}
+
+function onPracticalScoreChange(dimension: string, value: number | undefined) {
+  if (value === undefined) return
+  void savePracticalScore(dimension, value)
+}
+
+function getPracticalSaveStatus(key: string): string {
+  const s = practicalSavingMap.value[key]
+  if (s === 'saving') return '保存中…'
+  if (s === 'saved') return '已保存'
+  if (s === 'error') return '保存失败'
+  return ''
+}
+
+function getPracticalSaveStatusClass(key: string): string {
+  const s = practicalSavingMap.value[key]
+  if (s === 'saving') return 'text-[#F59E0B]'
+  if (s === 'saved') return 'text-[#22C55E]'
+  if (s === 'error') return 'text-[#EF4444]'
+  return ''
 }
 
 // ---- 保存分数 ----
@@ -397,7 +493,7 @@ function switchSheet(index: number) {
 
 onMounted(() => {
   window.addEventListener('resize', onResize)
-  void Promise.all([loadQuestions(), loadStudentList()]).then(() => {
+  void Promise.all([loadQuestions(), loadStudentList(), loadPracticalDimensions()]).then(() => {
     void loadStudentDetail(props.studentId)
   })
 })
@@ -421,10 +517,17 @@ onMounted(() => {
             <span v-if="studentDetail.student.college" class="text-gray-400">· {{ studentDetail.student.college }}</span>
           </span>
         </div>
-        <div v-if="studentDetail" class="flex items-center gap-2">
-          <span class="text-sm text-gray-500">总分</span>
-          <span class="text-lg font-bold text-[#4F7CFF]">{{ totalScore }}</span>
-          <span class="text-sm text-gray-400">/ 100</span>
+        <div v-if="studentDetail" class="flex items-center gap-4">
+          <div class="flex items-center gap-1">
+            <span class="text-sm text-gray-500">基础题</span>
+            <span class="text-lg font-bold text-[#4F7CFF]">{{ totalScore }}</span>
+            <span class="text-sm text-gray-400">/ 100</span>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="text-sm text-gray-500">实践题</span>
+            <span class="text-lg font-bold text-[#22C55E]">{{ practicalTotal }}</span>
+            <span class="text-sm text-gray-400">/ 100</span>
+          </div>
         </div>
       </div>
     </header>
@@ -598,6 +701,43 @@ onMounted(() => {
                   </el-button>
                 </div>
               </div>
+
+              <!-- 实践题打分 -->
+              <div v-if="practicalDimensions.length > 0" class="mt-6 border-t border-gray-100 pt-4">
+                <p class="mb-3 text-sm font-medium text-gray-700">实践题评分</p>
+                <div class="space-y-3">
+                  <div
+                    v-for="d in practicalDimensions"
+                    :key="d.key"
+                    class="flex items-center gap-3"
+                  >
+                    <span class="min-w-[140px] text-sm text-gray-600">{{ d.label }}</span>
+                    <el-input-number
+                      :model-value="practicalScoresMap[d.key]"
+                      :min="0"
+                      :max="d.max"
+                      :step="1"
+                      controls-position="right"
+                      size="default"
+                      @change="(val: number | undefined) => onPracticalScoreChange(d.key, val)"
+                    />
+                    <span class="text-sm text-gray-400">/ {{ d.max }}</span>
+                    <span
+                      v-if="getPracticalSaveStatus(d.key)"
+                      class="ml-auto text-[13px]"
+                      :class="getPracticalSaveStatusClass(d.key)"
+                    >
+                      {{ getPracticalSaveStatus(d.key) }}
+                    </span>
+                  </div>
+                </div>
+                <p class="mt-3 text-sm text-gray-500">
+                  实践题总分：<span class="font-medium text-[#22C55E]">{{ practicalTotal }}</span> / 100
+                  <span v-if="practicalScoredCount < practicalDimensions.length" class="ml-2 text-gray-400">
+                    （已评 {{ practicalScoredCount }}/{{ practicalDimensions.length }}）
+                  </span>
+                </p>
+              </div>
             </section>
           </div>
         </div>
@@ -611,7 +751,10 @@ onMounted(() => {
               已评 <span class="font-medium text-[#4F7CFF]">{{ scoredCount }}</span>/12
             </span>
             <span class="text-[13px] text-gray-500">
-              总分 <span class="font-medium text-[#4F7CFF]">{{ totalScore }}</span>/100
+              基础 <span class="font-medium text-[#4F7CFF]">{{ totalScore }}</span>/100
+            </span>
+            <span class="text-[13px] text-gray-500">
+              实践 <span class="font-medium text-[#22C55E]">{{ practicalTotal }}</span>/100
             </span>
           </div>
           <div>
@@ -648,7 +791,7 @@ onMounted(() => {
             </el-button>
           </div>
           <p v-if="studentDetail" class="mt-2 text-center text-xs text-gray-400">
-            已评 {{ scoredCount }}/12 · {{ totalScore }} 分
+            已评 {{ scoredCount }}/12 · 基础 {{ totalScore }} · 实践 {{ practicalTotal }}
           </p>
         </div>
 

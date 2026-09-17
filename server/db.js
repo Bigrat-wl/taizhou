@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS scores (
   updated_at  TEXT,
   PRIMARY KEY (student_id, question_no)
 );
+
+-- ⑦ practical_scores —— 实践题评分（五维度，主键 student_id + dimension）
+CREATE TABLE IF NOT EXISTS practical_scores (
+  student_id  TEXT,
+  dimension   TEXT,
+  score       INTEGER,
+  updated_at  TEXT,
+  PRIMARY KEY (student_id, dimension)
+);
 `;
 
 /** 建表（表已存在时为空操作） */

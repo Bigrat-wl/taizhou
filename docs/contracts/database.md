@@ -138,6 +138,41 @@ CREATE TABLE IF NOT EXISTS scores (
   - 第五部分 35（Q22）
 - 未打分的题**不建行**（区别于"0 分"）；总分 = 已有分数之和。
 
+## ⑧ practical_scores —— 实践题评分（五维度）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| student_id | TEXT | 学号 |
+| dimension | TEXT | 评分维度（见下） |
+| score | INTEGER | 该维度得分 |
+| updated_at | TEXT | 最后保存时间 |
+
+主键 `(student_id, dimension)` —— 同一学生同一维度只留一条。
+
+```sql
+CREATE TABLE IF NOT EXISTS practical_scores (
+  student_id  TEXT,
+  dimension   TEXT,
+  score       INTEGER,
+  updated_at  TEXT,
+  PRIMARY KEY (student_id, dimension)
+);
+```
+
+**五个维度及满分**（来自赛题 `SCORING.md`，全卷 **100 分**）：
+
+| dimension（存储值） | 显示名 | 满分 |
+|---------------------|--------|------|
+| `cleaning` | 数据判断与清洗 | 30 |
+| `roster_seating` | 最终名单与座位 | 30 |
+| `procurement_questions` | 采购与问题建议 | 15 |
+| `cross_check` | 跨表核验与异常记录 | 15 |
+| `webpage` | 网页接入（加分项） | 10 |
+
+- **维度固定为这五个**，代码里用常量（同 `questions.js` 的 `points` 思路）。
+- 未打分的维度**不建行**；实践题总分 = 已有分数之和。
+- **与基础题的分数分开统计、分开显示**（赛题本就是两部分各 100 分）。
+
 ## 设计说明
 
 - **答案按"一题一小问一行"存**，不存一大坨 JSON：后台要"实时看填到哪"，拆行后用 `COUNT`/`GROUP BY` 即可统计到小问粒度。

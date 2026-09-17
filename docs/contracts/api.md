@@ -112,12 +112,13 @@ tags: [契约, API]
 说明：供前端在导入前提示「将清空 N 名学生、M 条答案」，防止误操作。
 
 ### GET /api/admin/students —— 学生状态列表（状态看板用，不含答案内容）
-响应：`{ "ok": true, "students": [ { "studentId", "name", "college", "answered", "total", "submitted", "loggedIn", "scoredCount", "answeredQuestions": [1,2,5], "xlsx", "zip", "score", "maxScore" } ] }`
+响应：`{ "ok": true, "students": [ { "studentId", "name", "college", "answered", "total", "submitted", "loggedIn", "scoredCount", "answeredQuestions": [1,2,5], "xlsx", "zip", "score", "maxScore", "practicalScore", "practicalMax" } ] }`
 说明：
 - `submitted` 布尔（是否交卷，批卷的闸门）；`answeredQuestions` 是已填题号数组。
 - **`loggedIn`** 布尔：该学生当前是否有有效登录（`sessions` 表里有他的 token）。
 - **`scoredCount`**：已评题数（0–12），用于判断"批完了没有"。
-- **`score` / `maxScore`**：已评总分 / 应得满分（100）。未评分时 `score` 为 `null`（不是 0）。
+- **`score` / `maxScore`**：**基础题**已评总分 / 满分（100）。未评分时 `score` 为 `null`（不是 0）。
+- **`practicalScore` / `practicalMax`**：**实践题**已评总分 / 满分（100）。未评分时 `null`。**两部分分开统计、分开显示。**
 
 ### GET /api/admin/student/:id —— 某个学生的详细答卷（批卷页用）
 响应：
@@ -126,7 +127,8 @@ tags: [契约, API]
   "ok": true,
   "student": { "studentId", "name", "college", "class", "submittedAt", "loggedIn" },
   "answers": [ { "questionNo", "subNo", "answerText", "updatedAt" } ],
-  "scores":  [ { "questionNo", "score" } ],        // 已打的分（未打分的题不出现）
+  "scores":  [ { "questionNo", "score" } ],        // 基础题已打的分（未打分的题不出现）
+  "practicalScores": [ { "dimension", "score" } ], // 实践题各维度得分（未打分的不出现）
   "uploads": [ { "id", "type", "path", "at" } ]    // id 供预览接口引用
 }
 ```
@@ -155,6 +157,17 @@ tags: [契约, API]
 请求：`{ "studentId": "2026000001", "questionNo": 11, "score": 3 }`
 行为：写 `scores` 表（`(studentId, questionNo)` 覆盖写）；`score` 必须为 0…该题满分的整数。
 响应：`{ "ok": true, "questionNo": 11, "score": 3, "total": 57, "maxScore": 100 }`（返回该学生最新总分，省一次请求）
+
+### POST /api/admin/practical-score —— 保存实践题某维度得分
+请求：`{ "studentId": "2026000001", "dimension": "cleaning", "score": 24 }`
+行为：写 `practical_scores` 表（`(studentId, dimension)` 覆盖写）；`score` 为 0…该维度满分的整数。
+- 合法 `dimension`：`cleaning`(30) / `roster_seating`(30) / `procurement_questions`(15) / `cross_check`(15) / `webpage`(10)
+- 非法 dimension 或超范围 → 400
+响应：`{ "ok": true, "dimension": "cleaning", "score": 24, "practicalTotal": 68, "practicalMax": 100 }`
+
+### GET /api/admin/practical-dimensions —— 实践题评分维度定义
+响应：`{ "ok": true, "dimensions": [ { "key": "cleaning", "label": "数据判断与清洗", "max": 30 }, ... ] }`
+说明：维度**固定五个**（来自赛题 `SCORING.md`），前端据此渲染打分表单，不硬编码在页面里。
 
 ### POST /api/admin/exam-start —— 设置开赛时间
 请求：`{ "examStartAt": "2026-09-16T09:00:00" }`（写 `settings.exam_start_at`）

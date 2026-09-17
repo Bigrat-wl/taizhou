@@ -18,6 +18,8 @@ interface Student {
   scoredCount: number
   score: number | null
   maxScore: number
+  practicalScore: number | null
+  practicalMax: number
   answeredQuestions: number[]
   xlsx: boolean
   zip: boolean
@@ -34,6 +36,38 @@ const keyInput = ref(adminKey.value)
 const students = ref<Student[]>([])
 const loading = ref(false)
 const importing = ref(false)
+
+// ---- 添加学生 ----
+
+const addDialogVisible = ref(false)
+const addSubmitting = ref(false)
+const addForm = ref({ studentId: '', name: '', college: '', class: '' })
+
+function openAddDialog() {
+  addForm.value = { studentId: '', name: '', college: '', class: '' }
+  addDialogVisible.value = true
+}
+
+async function submitAddStudent() {
+  if (!addForm.value.studentId.trim() || !addForm.value.name.trim()) return
+  addSubmitting.value = true
+  try {
+    const res = await adminFetch('/api/admin/student', {
+      method: 'POST',
+      body: JSON.stringify(addForm.value),
+    })
+    const data = await res.json()
+    if (!data.ok) throw new Error(data.msg || '添加失败')
+    ElMessage.success(`已添加 ${data.student.name}`)
+    addDialogVisible.value = false
+    await fetchStudents()
+  } catch (e) {
+    if ((e as Error).message === 'AUTH_FAILED') return
+    ElMessage.error((e as Error).message || '添加失败')
+  } finally {
+    addSubmitting.value = false
+  }
+}
 
 // ---- 鉴权 ----
 
@@ -248,9 +282,39 @@ onMounted(() => {
         >
           <el-button type="primary" :loading="importing">导入名单</el-button>
         </el-upload>
+        <el-button @click="openAddDialog">添加学生</el-button>
         <el-button @click="handleExport" :disabled="students.length === 0">导出 CSV</el-button>
         <el-button @click="fetchStudents" :loading="loading" plain>刷新</el-button>
       </div>
+
+      <!-- 添加学生弹窗 -->
+      <el-dialog v-model="addDialogVisible" title="添加学生" width="420px" :close-on-click-modal="false">
+        <el-form label-width="60px" label-position="left">
+          <el-form-item label="学号">
+            <el-input v-model="addForm.studentId" placeholder="如 2026000099" />
+          </el-form-item>
+          <el-form-item label="姓名">
+            <el-input v-model="addForm.name" placeholder="如 张三" />
+          </el-form-item>
+          <el-form-item label="学院">
+            <el-input v-model="addForm.college" placeholder="选填" />
+          </el-form-item>
+          <el-form-item label="班级">
+            <el-input v-model="addForm.class" placeholder="选填" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="addDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="addSubmitting"
+            :disabled="!addForm.studentId.trim() || !addForm.name.trim()"
+            @click="submitAddStudent"
+          >
+            添加
+          </el-button>
+        </template>
+      </el-dialog>
 
       <!-- 学生列表 -->
       <el-table
@@ -327,10 +391,22 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="得分" width="90" align="center">
+        <el-table-column label="得分" width="180" align="center">
           <template #default="{ row }">
-            <span v-if="row.score !== null" class="font-medium text-[#4F7CFF]">{{ row.score }}<span class="text-gray-400">/{{ row.maxScore }}</span></span>
-            <span v-else class="text-gray-400">未评</span>
+            <div class="flex flex-col items-center gap-0.5 text-xs">
+              <span>
+                基础
+                <span v-if="row.score !== null" class="font-medium text-[#4F7CFF]">{{ row.score }}</span>
+                <span v-else class="text-gray-400">未评</span>
+                <span class="text-gray-400">/{{ row.maxScore }}</span>
+              </span>
+              <span>
+                实践
+                <span v-if="row.practicalScore !== null" class="font-medium text-[#22C55E]">{{ row.practicalScore }}</span>
+                <span v-else class="text-gray-400">未评</span>
+                <span class="text-gray-400">/{{ row.practicalMax }}</span>
+              </span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="80" align="center" fixed="right">
