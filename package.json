@@ -1,0 +1,14 @@
+{
+  "name": "quiz-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "问卷系统（server = Express + better-sqlite3，client = Vue 3 + Vite + TS + Tailwind）",
+  "scripts": {
+    "dev": "pnpm --filter client dev",
+    "build": "pnpm --filter client build",
+    "start": "pnpm --filter quiz-system-server start"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

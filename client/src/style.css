@@ -1,0 +1,40 @@
+@import 'tailwindcss';
+
+body {
+  margin: 0;
+}
+
+/* 视觉规范 v1：Element Plus 主题覆盖（docs/designs/08-visual-spec.md §一） */
+:root {
+  --el-color-primary: #4F7CFF;
+  --el-color-primary-light-3: #7A9FFF;
+  --el-color-primary-light-5: #A5BFFF;
+  --el-color-primary-light-7: #D0DFFF;
+  --el-color-primary-light-8: #E5ECFF;
+  --el-color-primary-light-9: #EEF2FF;
+  --el-color-primary-dark-2: #3B66E0;
+
+  --el-color-success: #22C55E;
+  --el-color-success-light-9: #DCFCE7;
+  --el-color-warning: #F59E0B;
+  --el-color-warning-light-9: #FEF3C7;
+  --el-color-danger: #EF4444;
+  --el-color-danger-light-9: #FEE2E2;
+
+  --el-bg-color-page: #F9FAFB;
+  --el-border-color: #E5E7EB;
+  --el-border-color-light: #F3F4F6;
+  --el-text-color-primary: #111827;
+  --el-text-color-regular: #374151;
+  --el-text-color-secondary: #6B7280;
+  --el-text-color-placeholder: #9CA3AF;
+
+  --el-font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+
+  --el-input-border-color: #E5E7EB;
+  --el-input-hover-border-color: #4F7CFF;
+  --el-input-focus-border-color: #4F7CFF;
+  --el-input-border-radius: 8px;
+}

@@ -1,0 +1,11 @@
+# 仓库根：server/ 与 client/ 是同一个 pnpm 工作区的两个项目。
+# 在仓库根执行一次 `pnpm install`，即可同时装好两个项目（各自 node_modules 独立）。
+
+packages:
+  - server
+  - client
+
+# pnpm 10+ 默认拦截依赖的安装/构建脚本（安全策略）：better-sqlite3 是原生模块，
+# 需要放行它的 install 脚本；其余依赖保持默认拦截。
+allowBuilds:
+  better-sqlite3: true

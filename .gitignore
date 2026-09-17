@@ -1,0 +1,50 @@
+# 依赖
+node_modules/
+
+# 数据库（本地生成，不入库）
+db.sqlite
+db.sqlite-journal
+db.sqlite-wal
+db.sqlite-shm
+
+# 上传的实践题文件
+uploads/
+
+# 构建产物
+client/dist/
+dist/
+
+# unplugin-auto-import / unplugin-vue-components 生成的类型声明
+# （构建时自动重新生成，不入库；这里逐文件列，避免以后放进同目录的手写 d.ts 被误忽略）
+client/src/types/auto-imports.d.ts
+client/src/types/components.d.ts
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# pnpm 的本地缓存/状态（见 .npmrc）
+.pnpm-cache/
+.pnpm-store/
+.corepack/
+
+# 验证过程中可能产生的临时 SSR 产物
+.ssr-verify/
+
+# 部署密钥（真实 ADMIN_KEY 不入库）
+deploy/ecosystem.config.cjs
+
+# 编辑器/系统
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ===== 内部文档（不公开）=====
+# 协作规则与流程记录
+AGENTS.md
+docs/agent-workflow-changelog.md
+docs/contracts/模块与并行.md
+# 任务记录（含执行汇报、审查结论、内部讨论）
+docs/tasks/
