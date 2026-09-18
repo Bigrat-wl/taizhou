@@ -33,19 +33,33 @@ pnpm install
 
 ## 开发（两个进程）
 
-```bash
-# 终端 1：后端，固定 3000 端口
-# 后台接口需要 ADMIN_KEY（未配置时后台一律 503 拒绝）
-cd server && ADMIN_KEY=你的后台密码 node --watch server.js
+**首次配置**：创建 `server/.env`（已 gitignore，不会入库）：
 
-# 终端 2：前端，5174 端口（5173 被本机系统端口转发占用，故约定 5174）
+```bash
+cat > server/.env << 'EOF'
+ADMIN_KEY=你的后台密码
+PORT=3000
+EOF
+```
+
+**以后启动**（不用再输密码）：
+
+```bash
+# 终端 1：后端，固定 3000 端口（自动读 server/.env）
+cd server && pnpm dev      # 带 --watch 热重载，改代码自动重启
+# 或 pnpm start            # 不带 watch
+
+# 终端 2：前端，5174 端口
 cd client && pnpm dev
 ```
 
 | 地址 | 说明 |
 |------|------|
 | <http://localhost:5174> | 学生端 |
-| <http://localhost:5174/?admin> | 后台（需填 `ADMIN_KEY`） |
+| <http://localhost:5174/?admin> | 后台（填 `server/.env` 里的 `ADMIN_KEY`） |
+
+> `server/.env` 里的 `ADMIN_KEY` 就是进后台的密码。改完要重启后端才生效。
+> **这个文件绝不能提交**——`.gitignore` 已排除；服务器上的密码走 PM2 配置（见 `deploy/`）。
 
 **端口约定**：`vite.config.ts` 的 proxy 把 `/api` 写死指向 `http://localhost:3000`，所以**后端不能换端口**；前端有 HMR，**复用 5174 即可，不要另起一套**。
 

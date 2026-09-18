@@ -153,6 +153,22 @@ tags: [契约, API]
 - **zip**：**只列文件清单，不解析也不渲染内容**——学生提交的 HTML 可能含恶意脚本，渲染有 XSS 风险。
 - 文件类型由 `uploads.file_type` 判定；无法解析 → `{ ok: false, msg: "无法解析该文件" }`。
 
+### POST /api/admin/preview-token/:uploadId —— 生成 zip 预览临时码
+鉴权：`requireAdmin`（X-Admin-Key 请求头）。
+校验 uploadId 存在且是 zip 类型 → 生成32位hex临时码（`crypto.randomBytes(16).toString('hex')`），存内存 Map，30分钟有效。
+同时查找入口文件（优先 `index.html`，否则根目录第一个 `.html`）。
+响应：`{ "ok": true, "token": "a1b2c3...", "entry": "index.html" }`
+
+### GET /api/admin/preview/:token/:filePath —— 带码读取 zip 内单个文件
+- 不用 `requireAdmin`，改为验码（查内存 Map）。
+- token 不存在或已过期 → 401。
+- `filePath` 校验：拒绝含 `..`、以 `/` 开头、空字符串 → 400。
+- `filePath` 在 zip 条目里精确匹配（`adm-zip` 的 `getEntry`），天然无穿越。
+- `Content-Type` 按扩展名推断（`.html`→`text/html`、`.js`→`text/javascript`、`.css`→`text/css`、`.json`→`application/json`、`.svg`→`image/svg+xml`、图片→对应类型、其他→`text/plain`）。
+- **不设** `Content-Disposition: attachment`（iframe 需要内联渲染）。
+- 惰性清理：每次验码时顺带清掉过期条目。
+- 失败：文件不存在 → 404；路径不合法 → 400。
+
 ### POST /api/admin/score —— 保存某学生某题的得分
 请求：`{ "studentId": "2026000001", "questionNo": 11, "score": 3 }`
 行为：写 `scores` 表（`(studentId, questionNo)` 覆盖写）；`score` 必须为 0…该题满分的整数。

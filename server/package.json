@@ -5,7 +5,8 @@
   "description": "问卷系统后端（Express + better-sqlite3）",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node --env-file=.env server.js",
+    "dev": "node --env-file=.env --watch server.js"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

@@ -85,14 +85,14 @@ const uploadSlots: {
     title: '实践成果表（xlsx）',
     required: true,
     accept: '.xlsx',
-    hint: '必交：填写完成的 xlsx 成果表。',
+    hint: '必交：填写完成的 xlsx 成果表。可以点击选择，也可以直接拖进来。',
   },
   {
     type: 'zip',
     title: '网页源码（zip）',
     required: false,
     accept: '.zip',
-    hint: '选交：如果做了网页，把源码打成 zip 上传。',
+    hint: '选交：如果做了网页，把源码打成 zip 上传。网页请打包成 zip 再拖进来。',
   },
 ]
 const uploads = ref<UploadItem[]>([])
@@ -104,6 +104,8 @@ const uploadInputEls: Record<UploadType, Ref<HTMLInputElement | null>> = {
 const uploadsLoading = ref(false)
 const uploading = ref<UploadType | null>(null)
 const uploadMessage = ref<Message | null>(null)
+const draggingOver = ref<UploadType | null>(null)
+const dragCounters: Record<UploadType, number> = { xlsx: 0, zip: 0 }
 
 const uploadedByType = computed<Partial<Record<UploadType, UploadItem>>>(() => {
   const map: Partial<Record<UploadType, UploadItem>> = {}
@@ -520,6 +522,52 @@ async function doUpload(type: UploadType) {
   }
 }
 
+// ── 拖拽上传 ──────────────────────────────────────────────────────────
+function onDragEnter(type: UploadType, e: DragEvent) {
+  e.preventDefault()
+  dragCounters[type]++
+  draggingOver.value = type
+}
+
+function onDragLeave(type: UploadType, e: DragEvent) {
+  e.preventDefault()
+  dragCounters[type]--
+  if (dragCounters[type] <= 0) {
+    dragCounters[type] = 0
+    draggingOver.value = null
+  }
+}
+
+function onDragOver(_type: UploadType, e: DragEvent) {
+  e.preventDefault()
+}
+
+function onDrop(type: UploadType, e: DragEvent) {
+  e.preventDefault()
+  dragCounters[type] = 0
+  draggingOver.value = null
+
+  const files = e.dataTransfer?.files
+  if (!files || files.length === 0) return
+
+  if (files.length > 1) {
+    uploadMessage.value = { kind: 'err', text: '一次只能传一个文件，网页请打包成 zip' }
+    return
+  }
+
+  const file = files[0]
+  const name = file.name.toLowerCase()
+  const expectExt = type === 'xlsx' ? '.xlsx' : '.zip'
+  if (!name.endsWith(expectExt)) {
+    uploadMessage.value = { kind: 'err', text: '只支持 .xlsx 或 .zip 文件' }
+    return
+  }
+
+  uploadFiles[type] = file
+  uploadMessage.value = null
+  void doUpload(type)
+}
+
 // ── 交卷 ─────────────────────────────────────────────────────────────
 async function submitExam() {
   if (!canSubmit.value || submitting.value) return
@@ -825,7 +873,7 @@ onBeforeUnmount(() => {
               <p class="flex-1 whitespace-pre-line text-base font-medium leading-relaxed text-gray-900">
                 <span class="mr-1 font-semibold text-[#4F7CFF]">{{ q.no }}.</span>{{ q.prompt }}
               </p>
-              <span class="shrink-0 text-[13px]" :class="statusClass(q.no)">{{ statusText(q.no) }}</span>
+              <span class="w-[52px] shrink-0 text-right text-[13px]" :class="statusClass(q.no)">{{ statusText(q.no) }}</span>
             </div>
 
             <!-- 多选（卡片式） -->
@@ -1090,28 +1138,49 @@ onBeforeUnmount(() => {
               </p>
             </div>
 
-            <div v-if="!submitted" class="mt-4 flex flex-wrap items-center gap-3">
-              <input
-                :ref="(el) => setUploadInput(slot.type, el)"
-                type="file"
-                :accept="slot.accept"
-                class="block w-full max-w-sm text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200"
-                @change="onPickUpload(slot.type, $event)"
-              />
-              <button
-                type="button"
-                class="rounded-lg bg-[#4F7CFF] px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[#3B66E0] hover:shadow disabled:cursor-not-allowed disabled:bg-gray-300"
-                :disabled="uploading !== null || !uploadFiles[slot.type]"
-                @click="doUpload(slot.type)"
+            <div v-if="!submitted" class="mt-4 space-y-2">
+              <div
+                class="rounded-xl border-2 border-dashed p-4 transition-colors"
+                :class="[
+                  draggingOver === slot.type
+                    ? 'border-[#4F7CFF] bg-[#EEF2FF]'
+                    : 'border-gray-200 hover:border-gray-300',
+                ]"
+                @dragenter="onDragEnter(slot.type, $event)"
+                @dragleave="onDragLeave(slot.type, $event)"
+                @dragover="onDragOver(slot.type, $event)"
+                @drop="onDrop(slot.type, $event)"
               >
-                {{
-                  uploading === slot.type
-                    ? '上传中…'
-                    : uploadedByType[slot.type]
-                      ? '重新上传（覆盖）'
-                      : '上传'
-                }}
-              </button>
+                <div v-if="draggingOver === slot.type" class="py-2 text-center text-sm font-medium text-[#4F7CFF]">
+                  松开即可上传
+                </div>
+                <template v-else>
+                  <input
+                    :ref="(el) => setUploadInput(slot.type, el)"
+                    type="file"
+                    :accept="slot.accept"
+                    class="block w-full max-w-sm text-sm text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200"
+                    @change="onPickUpload(slot.type, $event)"
+                  />
+                  <p class="mt-2 text-xs text-gray-400">或将文件拖到此处</p>
+                </template>
+              </div>
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  class="rounded-lg bg-[#4F7CFF] px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-[#3B66E0] hover:shadow disabled:cursor-not-allowed disabled:bg-gray-300"
+                  :disabled="uploading !== null || !uploadFiles[slot.type]"
+                  @click="doUpload(slot.type)"
+                >
+                  {{
+                    uploading === slot.type
+                      ? '上传中…'
+                      : uploadedByType[slot.type]
+                        ? '重新上传（覆盖）'
+                        : '上传'
+                  }}
+                </button>
+              </div>
             </div>
             <p v-if="uploadFiles[slot.type] && !submitted" class="mt-2 text-xs text-gray-400">
               已选择：{{ uploadFiles[slot.type]?.name }}（{{ fmtSize(uploadFiles[slot.type]?.size ?? 0) }}）

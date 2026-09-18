@@ -101,6 +101,12 @@ const activeSheetIndex = ref(0)
 const sheetPage = ref(1)
 const SHEET_PAGE_SIZE = 50
 
+// ---- zip iframe 预览 ----
+
+const iframeSrc = ref('')
+const iframeLoading = ref(false)
+const iframeError = ref('')
+
 // ---- 实践题打分 ----
 
 interface PracticalDimension {
@@ -292,6 +298,41 @@ function getPracticalSaveStatusClass(key: string): string {
   return ''
 }
 
+// ---- 打分进度条 ----
+
+/** 四段代表分（差/中/良/优）：取各段中点，第一段至少为1 */
+function getSegmentScores(points: number): number[] {
+  return [
+    Math.max(1, Math.round(points * 0.125)),  // 差：12.5% 中点
+    Math.round(points * 0.375),               // 中：37.5% 中点
+    Math.round(points * 0.625),               // 良：62.5% 中点
+    points,                                    // 优：100%
+  ]
+}
+
+/** 按 score/points 比例返回颜色（整条 bar 一个色）；undefined 不显示填充层 */
+function getScoreColor(score: number | undefined, points: number): string {
+  if (score === undefined) return '#E5E7EB'   // 未打分：不显示填充层，露出灰底
+  if (score === 0) return '#EF4444'           // 0%：红
+  const ratio = score / points
+  if (ratio <= 0.33) return '#F97316'         // 1-33%：橙
+  if (ratio <= 0.66) return '#F59E0B'         // 34-66%：黄
+  if (ratio < 1) return '#4ADE80'             // 67-99%：浅绿
+  return '#22C55E'                             // 100%：绿
+}
+
+function onSegmentClick(questionNo: number, points: number, segmentIndex: number) {
+  const segScores = getSegmentScores(points)
+  void saveScore(questionNo, segScores[segmentIndex])
+}
+
+function onScoreInputChange(questionNo: number, points: number, rawValue: string) {
+  const num = parseInt(rawValue, 10)
+  if (Number.isNaN(num)) return
+  const clamped = Math.max(0, Math.min(points, num))
+  void saveScore(questionNo, clamped)
+}
+
 // ---- 保存分数 ----
 
 async function saveScore(questionNo: number, score: number) {
@@ -319,11 +360,6 @@ async function saveScore(questionNo: number, score: number) {
     savingMap.value[questionNo] = 'error'
     ElMessage.error((e as Error).message || '保存失败')
   }
-}
-
-function onScoreChange(questionNo: number, value: number | undefined) {
-  if (value === undefined) return
-  void saveScore(questionNo, value)
 }
 
 // ---- 获取某题某小问的答案 ----
@@ -434,6 +470,9 @@ async function openPreview(uploadId: number, type: string) {
   activeSheetIndex.value = 0
   sheetPage.value = 1
   previewFileName.value = ''
+  iframeSrc.value = ''
+  iframeError.value = ''
+  iframeLoading.value = false
 
   try {
     const res = await adminFetch(`/api/admin/upload/${uploadId}/preview`)
@@ -444,6 +483,21 @@ async function openPreview(uploadId: number, type: string) {
       previewSheets.value = data.sheets
     } else if (data.type === 'zip') {
       previewZipFiles.value = data.files
+      // 方案 B：发码接口拿临时码 + 入口文件名，构建 iframe 地址（码在路径里，不带 ?key=）
+      iframeLoading.value = true
+      try {
+        const tokenRes = await adminFetch(`/api/admin/preview-token/${uploadId}`, { method: 'POST' })
+        const tokenData = await tokenRes.json()
+        if (!tokenRes.ok || !tokenData.ok || !tokenData.entry) {
+          iframeError.value = tokenData.msg || '压缩包内没有网页文件'
+        } else {
+          iframeSrc.value = `/api/admin/preview/${tokenData.token}/${tokenData.entry}`
+        }
+      } catch {
+        iframeError.value = '压缩包内没有网页文件'
+      } finally {
+        iframeLoading.value = false
+      }
     }
   } catch (e) {
     if ((e as Error).message !== 'AUTH_FAILED') {
@@ -633,45 +687,70 @@ onMounted(() => {
               </div>
 
               <!-- 各小问答案 -->
-              <div v-if="q.subs && q.subs.length > 0" class="mb-6 space-y-3 border-l-2 border-[#EEF2FF] pl-4">
+              <div v-if="q.subs && q.subs.length > 0" class="mb-6 space-y-3">
                 <div v-for="sub in q.subs" :key="sub.subNo">
                   <p class="mb-1 text-[15px] font-medium text-gray-700">{{ sub.text }}</p>
                   <div
-                    class="whitespace-pre-line rounded-lg bg-gray-50 px-4 py-3 text-[15px] leading-relaxed text-gray-700"
+                    class="whitespace-pre-line rounded-lg border-l-[3px] border-[#4F7CFF] bg-[#F8FAFC] px-4 py-3 text-[15px] leading-relaxed"
+                    :class="getAnswer(q.no, sub.subNo) ? 'text-gray-700' : 'italic text-gray-400'"
                   >
-                    {{ getAnswer(q.no, sub.subNo) || '（未作答）' }}
+                    {{ getAnswer(q.no, sub.subNo) || '未作答' }}
                   </div>
                 </div>
               </div>
               <!-- 无小问的题直接显示答案 -->
               <div v-else class="mb-6">
                 <div
-                  class="whitespace-pre-line rounded-lg bg-gray-50 px-4 py-3 text-[15px] leading-relaxed text-gray-700"
+                  class="whitespace-pre-line rounded-lg border-l-[3px] border-[#4F7CFF] bg-[#F8FAFC] px-4 py-3 text-[15px] leading-relaxed"
+                  :class="getAnswer(q.no, 0) ? 'text-gray-700' : 'italic text-gray-400'"
                 >
-                  {{ getAnswer(q.no, 0) || '（未作答）' }}
+                  {{ getAnswer(q.no, 0) || '未作答' }}
                 </div>
               </div>
 
-              <!-- 打分框（仅计分题） -->
-              <div v-if="q.scored" class="flex items-center gap-3 border-t border-gray-100 pt-4">
-                <span class="text-sm text-gray-500">得分</span>
-                <el-input-number
-                  :model-value="scoresMap[q.no]"
-                  :min="0"
-                  :max="q.points"
-                  :step="1"
-                  controls-position="right"
-                  size="default"
-                  @change="(val: number | undefined) => onScoreChange(q.no, val)"
-                />
-                <span class="text-sm text-gray-400">/ {{ q.points }}</span>
-                <span
-                  v-if="getSaveStatus(q.no)"
-                  class="ml-auto text-[13px]"
-                  :class="getSaveStatusClass(q.no)"
-                >
-                  {{ getSaveStatus(q.no) }}
-                </span>
+              <!-- 打分条（仅计分题） -->
+              <div v-if="q.scored" class="mt-2 border-t border-gray-100 pt-4">
+                <div class="flex items-center gap-3">
+                  <span class="text-sm text-gray-500">得分</span>
+                  <!-- 点击式进度条：一个容器 + 绝对定位填充层 + 4个透明点击区 -->
+                  <div class="relative h-3 flex-1 overflow-hidden rounded-sm bg-[#E5E7EB]">
+                    <!-- 填充层：宽度 = 得分比例，整条一个颜色 -->
+                    <div
+                      v-if="scoresMap[q.no] !== undefined"
+                      class="absolute inset-y-0 left-0 rounded-sm transition-all duration-200"
+                      :style="{
+                        width: (scoresMap[q.no] / q.points) * 100 + '%',
+                        background: getScoreColor(scoresMap[q.no], q.points),
+                      }"
+                    />
+                    <!-- 4 个透明点击区，各占 25% -->
+                    <div class="absolute inset-0 flex">
+                      <div
+                        v-for="si in 4"
+                        :key="si"
+                        class="flex-1 cursor-pointer transition-colors hover:bg-black/5"
+                        @click="onSegmentClick(q.no, q.points, si - 1)"
+                      />
+                    </div>
+                  </div>
+                  <!-- 可手输数字 -->
+                  <input
+                    type="number"
+                    :value="scoresMap[q.no] ?? ''"
+                    :min="0"
+                    :max="q.points"
+                    :placeholder="'0–' + q.points"
+                    class="w-14 rounded border border-gray-200 px-1.5 py-0.5 text-center text-sm text-gray-700 outline-none transition focus:border-[#4F7CFF] focus:ring-1 focus:ring-[#4F7CFF]/30"
+                    @change="(e: Event) => onScoreInputChange(q.no, q.points, (e.target as HTMLInputElement).value)"
+                  />
+                  <span class="text-sm text-gray-400">/ {{ q.points }}</span>
+                  <span
+                    class="w-[52px] flex-shrink-0 text-right text-[13px]"
+                    :class="getSaveStatusClass(q.no)"
+                  >
+                    {{ getSaveStatus(q.no) }}
+                  </span>
+                </div>
               </div>
             </section>
 
@@ -723,8 +802,7 @@ onMounted(() => {
                     />
                     <span class="text-sm text-gray-400">/ {{ d.max }}</span>
                     <span
-                      v-if="getPracticalSaveStatus(d.key)"
-                      class="ml-auto text-[13px]"
+                      class="w-[52px] flex-shrink-0 text-right text-[13px]"
                       :class="getPracticalSaveStatusClass(d.key)"
                     >
                       {{ getPracticalSaveStatus(d.key) }}
@@ -757,7 +835,7 @@ onMounted(() => {
               实践 <span class="font-medium text-[#22C55E]">{{ practicalTotal }}</span>/100
             </span>
           </div>
-          <div>
+          <div class="w-[72px] text-right">
             <span
               v-if="Object.values(savingMap).includes('saving')"
               class="text-[13px] text-[#F59E0B]"
@@ -917,26 +995,38 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- zip 预览 -->
+      <!-- zip 预览：iframe 渲染学生网页 -->
       <div v-else-if="previewType === 'zip'">
-        <p class="mb-3 text-sm text-gray-500">
-          文件清单（不渲染内容，防止 XSS）
-        </p>
-        <div class="overflow-hidden rounded-lg border border-gray-200">
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="bg-gray-50">
-                <th class="border-b border-r border-gray-200 px-4 py-2 text-left font-medium text-gray-600">文件名</th>
-                <th class="border-b border-gray-200 px-4 py-2 text-right font-medium text-gray-600">大小</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="f in previewZipFiles" :key="f.name" class="border-b border-gray-100 last:border-0">
-                <td class="border-r border-gray-100 px-4 py-2 text-gray-700">{{ f.name }}</td>
-                <td class="px-4 py-2 text-right text-gray-500">{{ formatFileSize(f.size) }}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-if="iframeLoading" class="flex items-center justify-center py-12">
+          <span class="text-sm text-gray-400">正在查找入口文件…</span>
+        </div>
+        <div v-else-if="iframeError" class="py-8 text-center">
+          <p class="text-sm text-gray-500">{{ iframeError }}</p>
+          <p class="mt-4 text-xs text-gray-400">文件清单</p>
+          <div class="mt-2 overflow-hidden rounded-lg border border-gray-200">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="bg-gray-50">
+                  <th class="border-b border-r border-gray-200 px-4 py-2 text-left font-medium text-gray-600">文件名</th>
+                  <th class="border-b border-gray-200 px-4 py-2 text-right font-medium text-gray-600">大小</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="f in previewZipFiles" :key="f.name" class="border-b border-gray-100 last:border-0">
+                  <td class="border-r border-gray-100 px-4 py-2 text-gray-700">{{ f.name }}</td>
+                  <td class="px-4 py-2 text-right text-gray-500">{{ formatFileSize(f.size) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div v-else-if="iframeSrc">
+          <p class="mb-2 text-xs text-gray-400">这是学生提交的网页预览（沙箱隔离，仅允许脚本运行）</p>
+          <iframe
+            :src="iframeSrc"
+            sandbox="allow-scripts"
+            class="h-[600px] w-full rounded border border-gray-200"
+          />
         </div>
       </div>
 

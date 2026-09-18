@@ -796,6 +796,151 @@ router.get('/admin/upload/:uploadId/preview', requireAdmin, (req, res, next) => 
   }
 });
 
+// ---- 新接口 ⑧：POST /api/admin/preview-token/:uploadId —— 生成 zip 预览临时码 ----
+// ---- 新接口 ⑨：GET /api/admin/preview/:token/*filePath —— 带码读取 zip 内文件 ----
+//
+// 方案 B：临时码放进路径（路径自动继承，相对引用不丢码）。
+// 发码接口用 requireAdmin 正常鉴权；读取接口验码不用 requireAdmin。
+
+/** 根据扩展名返回 Content-Type */
+function contentTypeFor(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    '.html': 'text/html; charset=utf-8',
+    '.htm': 'text/html; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+  };
+  return map[ext] || 'text/plain; charset=utf-8';
+}
+
+/** 内存临时码 Map：token → { uploadId, expiresAt } */
+const previewTokens = new Map();
+
+// POST /api/admin/preview-token/:uploadId —— 生成临时码
+router.post('/admin/preview-token/:uploadId', requireAdmin, (req, res, next) => {
+  try {
+    const uploadId = Number(req.params.uploadId);
+    if (!Number.isInteger(uploadId) || uploadId <= 0) {
+      return res.status(400).json({ ok: false, msg: 'uploadId 不合法' });
+    }
+
+    const upload = selectUploadById.get(uploadId);
+    if (!upload) {
+      return res.status(404).json({ ok: false, msg: '上传记录不存在' });
+    }
+    if (upload.file_type !== 'zip') {
+      return res.status(400).json({ ok: false, msg: '只支持 zip 类型的上传' });
+    }
+
+    const absPath = path.resolve(uploadsDir, upload.file_path);
+    if (!fs.existsSync(absPath)) {
+      return res.status(404).json({ ok: false, msg: '文件不存在' });
+    }
+
+    // 查入口文件（三级优先级）
+    const zip = new AdmZip(absPath);
+    const entries = zip.getEntries();
+    let entry = null;
+
+    // ① 根目录 index.html
+    const rootIndex = entries.find((e) => !e.isDirectory && e.entryName === 'index.html');
+    if (rootIndex) {
+      entry = 'index.html';
+    }
+
+    // ② 任意层级的 index.html（如 我的网页/index.html）
+    if (!entry) {
+      const anyIndex = entries.find(
+        (e) => !e.isDirectory && e.entryName !== 'index.html' && e.entryName.endsWith('/index.html')
+      );
+      if (anyIndex) entry = anyIndex.entryName;
+    }
+
+    // ③ 任意层级的第一个 .html
+    if (!entry) {
+      const anyHtml = entries.find((e) => !e.isDirectory && e.entryName.endsWith('.html'));
+      if (anyHtml) entry = anyHtml.entryName;
+    }
+
+    if (!entry) {
+      return res.status(404).json({ ok: false, msg: '压缩包内没有 html 文件' });
+    }
+
+    // 生成临时码，30 分钟有效
+    const token = crypto.randomBytes(16).toString('hex');
+    previewTokens.set(token, { uploadId, expiresAt: Date.now() + 30 * 60 * 1000 });
+
+    res.json({ ok: true, token, entry });
+  } catch (e) {
+    next(e);
+  }
+});
+
+// GET /api/admin/preview/:token/*filePath —— 带码读取 zip 内单个文件
+router.get('/admin/preview/:token/*filePath', (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    // 惰性清理过期条目
+    const now = Date.now();
+    for (const [k, v] of previewTokens) {
+      if (v.expiresAt <= now) previewTokens.delete(k);
+    }
+
+    const record = previewTokens.get(token);
+    if (!record) {
+      return res.status(401).json({ ok: false, msg: '预览码无效或已过期' });
+    }
+    if (record.expiresAt <= now) {
+      previewTokens.delete(token);
+      return res.status(401).json({ ok: false, msg: '预览码无效或已过期' });
+    }
+
+    // filePath 校验
+    const filePath = Array.isArray(req.params.filePath)
+      ? req.params.filePath.join('/')
+      : String(req.params.filePath || '');
+    if (!filePath || filePath === '') {
+      return res.status(400).json({ ok: false, msg: 'filePath 不能为空' });
+    }
+    if (filePath.includes('..') || filePath.startsWith('/')) {
+      return res.status(400).json({ ok: false, msg: 'filePath 不合法' });
+    }
+
+    const upload = selectUploadById.get(record.uploadId);
+    if (!upload) {
+      return res.status(404).json({ ok: false, msg: '上传记录不存在' });
+    }
+
+    const absPath = path.resolve(uploadsDir, upload.file_path);
+    if (!fs.existsSync(absPath)) {
+      return res.status(404).json({ ok: false, msg: '文件不存在' });
+    }
+
+    const zip = new AdmZip(absPath);
+    const entry = zip.getEntry(filePath);
+    if (!entry || entry.isDirectory) {
+      return res.status(404).json({ ok: false, msg: '压缩包内未找到该文件' });
+    }
+
+    const content = entry.getData();
+    const ct = contentTypeFor(filePath);
+    res.setHeader('Content-Type', ct);
+    res.send(content);
+  } catch (e) {
+    next(e);
+  }
+});
+
 // ---- 错误兜底 ----
 
 router.use((err, req, res, _next) => {
